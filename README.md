@@ -9,11 +9,10 @@
 
 ### /api:
 1. make a .env based on .env.example and make your hash key (if you don't have one run ```node -e "console.log(require('crypto').randomBytes(64).toString('hex'))" to generate jwt secrete```)
-2. run ```npm init```
-3. run ```npm i```
-4. run ```npm start``` for a normal run or ```npm run dev``` for auto reload
-5. register and open database.db in a db editor to give yourself admin. To add more admins you can use the API but the first one has to be done manually
-6. go to the running link (from the console) and go to /docs to read the api docs
+2. run ```npm i```
+3. run ```npm start``` for a normal run or ```npm run dev``` for auto reload
+4. register and open database.db in a db editor to give yourself admin. To add more admins you can use the API but the first one has to be done manually
+5. go to the running link (from the console) and go to /docs to read the api docs
 
 16 total paths:
 - 8 GET

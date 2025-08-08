@@ -25,7 +25,7 @@ app.use(bodyParser.json());
 const db = require("better-sqlite3")("database.db");
 
 const rateLimit = require("express-rate-limit");
-const limiter = rateLimit({
+const limiter = rateLimit({ // rate limit, change to your resources I didn't actually check
 	windowMs: 15 * 60 * 1000,
 	max: 500,
 });
@@ -41,11 +41,6 @@ const swagger = swaggerJsDocs({
 			version: "1.0.0",
 			description: "An API to manage, find, and run Hack Club YSWSs",
 		},
-		servers: [
-			{
-				url: `http://localhost:1234`,
-			},
-		],
 		components: {
 			securitySchemes: {
 				bearerAuth: {
@@ -194,6 +189,42 @@ function verifyTokenAdmin(req, res, next) {
 	});
 }
 
+function verifyTokenYSWSowner(req, res, next) {
+	const authHeader = req.headers["authorization"];
+	const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+	if (!token) {
+		return res.status(401).json({ error: 'Access token required' });
+	}
+
+	jwt.verify(token, process.env.jwt, (err, decoded) => {
+		if (err) {
+			return res.status(403).json({ error: 'Invalid or expired token' });
+		}
+
+		const user = db.prepare("SELECT * FROM users WHERE username = ?").get(decoded.username);
+		if (!user) {
+			return res.status(404).json({ error: 'User not found' });
+		}
+
+		const yswsName = req.params.name;
+		if (!yswsName) {
+			return res.status(400).json({ error: 'YSWS Name is required' });
+		}
+
+		const ysws = db.prepare("SELECT * FROM ysws WHERE name = ?").get(yswsName);
+		if (!ysws) {
+			return res.status(404).json({ error: 'YSWS not found' });
+		}
+
+		if (ysws.owner !== user.username) {
+			return res.status(403).json({ error: 'Access denied - you are not the owner of this YSWS' });
+		}
+
+		req.user = { ...decoded, rank: user.rank };
+		next();
+	});
+}
+
 // API stuff
 /**
  * @swagger
@@ -311,9 +342,9 @@ app.get('/api/ysws/get/:id', (req, res) => {
  *               description:
  *                 type: string
  *               startdate:
- *                 type: string
+ *                 type: string ("year-2digitMonth-2digitDay") (e.g., "2025-08-05")
  *               enddate:
- *                 type: string
+ *                 type: string ("year-2digitMonth-2digitDay") (e.g., "2025-08-10")
  *               userid:
  *                 type: integer
  *     security:
@@ -322,19 +353,22 @@ app.get('/api/ysws/get/:id', (req, res) => {
  *       200:
  *         description: YSWS created successfully
  *       409:
- *         description: Username already taken
+ *         description: Username not found
  *       400:
  *         description: No body
  */
-// TODO: auto add user ID by token
 app.post('/api/ysws/new', verifyToken, (req, res) => {
-	const { name, description, startdate, enddate, userid } = req.body;
-	if (!name || !description || !startdate || !enddate || !userid) {
+	const { name, description, startdate, enddate, username } = req.body;
+	if (!name || !description || !startdate || !enddate || !username) {
 		return res.status(400).json({ error: 'Name, description, start date, end date, and user ID are required' });
+	}
+	const existingUser = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+	if (!existingUser) {
+		return res.status(409).json({ error: 'Username does not exist' });
 	}
 
 	const data = db.prepare("INSERT INTO ysws (name, description, startdate, enddate, owner) VALUES (?, ?, ?, ?, ?)");
-	data.run(name, description, startdate, enddate, userid);
+	data.run(name, description, startdate, enddate, username);
 	res.status(201).json({ message: 'YWS created successfully' });
 });
 /**
@@ -420,6 +454,50 @@ app.get('/api/ysws/getactive', (req, res) => {
 		return res.status(404).json({ error: 'No active YSWS found' });
 	}
 	res.json(ysws);
+});
+/**
+ * @swagger
+ * /api/ysws/edit/{name}:
+ *   put:
+ *     summary: Edit a YSWS by name (user must be owner)
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               startdate:
+ *                 type: string
+ *                 format: date
+ *               enddate:
+ *                 type: string
+ *                 format: date
+ *     responses:
+ *       200:
+ *         description: YSWS updated successfully
+ *       404:
+ *         description: No body
+ */
+app.put('/api/ysws/edit/:name', verifyTokenYSWSowner, (req, res) => {
+	const { name, description, startdate, enddate } = req.body;
+	if (!name || !description || !startdate || !enddate) {
+		return res.status(400).json({ error: 'Name, description, startdate, and enddate are required' });
+	}
+	const updateYSWS = db.prepare("UPDATE ysws SET description = ?, startdate = ?, enddate = ? WHERE name = ?");
+	const result = updateYSWS.run(description, startdate, enddate, req.params.name);
+	
+	if (result.changes === 0) {
+		return res.status(404).json({ error: 'YSWS not found or no changes made' });
+	}
+	
+	res.json({ message: 'YSWS updated successfully' });
 });
 
 // user stuff
